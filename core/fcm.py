@@ -10,10 +10,24 @@ PROJECT_ID = "librarain"
 FCM_URL = f"https://fcm.googleapis.com/v1/projects/{PROJECT_ID}/messages:send"
 
 def get_access_token() -> str:
-    credentials = service_account.Credentials.from_service_account_file(
-        SERVICE_ACCOUNT_FILE,
-        scopes=["https://www.googleapis.com/auth/firebase.messaging"],
-    )
+    import os
+    import json
+    firebase_json_str = os.getenv("FIREBASE_JSON")
+    
+    if firebase_json_str:
+        # Load from Railway Environment Variable
+        creds_dict = json.loads(firebase_json_str)
+        credentials = service_account.Credentials.from_service_account_info(
+            creds_dict,
+            scopes=["https://www.googleapis.com/auth/firebase.messaging"],
+        )
+    else:
+        # Load from Local File
+        credentials = service_account.Credentials.from_service_account_file(
+            SERVICE_ACCOUNT_FILE,
+            scopes=["https://www.googleapis.com/auth/firebase.messaging"],
+        )
+        
     request = google.auth.transport.requests.Request()
     credentials.refresh(request)
     return credentials.token
