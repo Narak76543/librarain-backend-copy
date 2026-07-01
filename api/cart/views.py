@@ -1,6 +1,6 @@
 import logging
 from decimal import Decimal
-from fastapi import Depends
+from fastapi import Depends, Request
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session, joinedload
 from starlette import status
@@ -13,6 +13,7 @@ from api.auth_user.security import get_current_user
 from api.cart.models import TBL_CART_ITEM
 from api.cart import schemas
 from api.books.models import TBL_BOOK
+from core.logger import write_log, LogAction, LogModule
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,7 @@ def get_cart(
 # ================= POST /cart/items =========================
 @app.post("/api/v1/cart/items", tags=["Cart"])
 def add_to_cart(
+    request     : Request,
     payload     : schemas.CartItemCreate,
     current_user: TBL_AUTH_USER = Depends(get_current_user),
     db          : Session       = Depends(get_db),
@@ -128,6 +130,21 @@ def add_to_cart(
     db.commit()
     db.refresh(cart_item)
 
+    write_log(
+        db          = db,
+        action      = LogAction.CART_ITEM_ADDED,
+        module      = LogModule.CART,
+        description = f"Added {payload.quantity} of '{book.title}' to cart",
+        user_id     = current_user.id,
+        user_email  = current_user.email,
+        user_role   = "USER",
+        entity_type = "cart_item",
+        entity_id   = str(book.id),
+        new_value   = {"book_id": str(book.id), "quantity": payload.quantity},
+        request     = request,
+        commit      = True,
+    )
+
     return response(
         ok          = True,
         status_code = status.HTTP_201_CREATED,
@@ -182,6 +199,7 @@ def update_cart_item(
 # ================= DELETE /cart/items/{id} ==================
 @app.delete("/api/v1/cart/items/{item_id}", tags=["Cart"])
 def remove_cart_item(
+    request     : Request,
     item_id     : str,
     current_user: TBL_AUTH_USER = Depends(get_current_user),
     db          : Session       = Depends(get_db),
@@ -202,8 +220,23 @@ def remove_cart_item(
             message     = "Cart item not found",
         )
 
+    book_id = item.book_id
     db.delete(item)
     db.commit()
+
+    write_log(
+        db          = db,
+        action      = LogAction.CART_ITEM_REMOVED,
+        module      = LogModule.CART,
+        description = f"Removed item {book_id} from cart",
+        user_id     = current_user.id,
+        user_email  = current_user.email,
+        user_role   = "USER",
+        entity_type = "cart_item",
+        entity_id   = str(book_id),
+        request     = request,
+        commit      = True,
+    )
 
     return response(
         ok          = True,

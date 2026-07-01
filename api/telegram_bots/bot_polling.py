@@ -30,7 +30,7 @@ async def process_update(update: dict):
             # Example: /start login_123e4567-e89b-12d3-a456-426614174000
             # OR       /start 123e4567-e89b-12d3-a456-426614174000 (linking)
             start_payload = parts[1].strip()
-            
+
             with Session() as db:
                 if start_payload.startswith("login_"):
                     # This is a deep link for LOGIN/REGISTER

@@ -2,8 +2,20 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-env_path = Path(__file__).resolve().parent / ".env"
-load_dotenv(dotenv_path=env_path)
+BASE_DIR = Path(__file__).resolve().parent
+ENVIRONMENT = os.getenv("APP_ENV", "development").strip().lower()
+
+if ENVIRONMENT in {"development", "dev", "local"}:
+    env_path = BASE_DIR / ".env.dev"
+    if not env_path.exists():
+        env_path = BASE_DIR / ".env"
+elif ENVIRONMENT in {"production", "prod", "live"}:
+    env_path = BASE_DIR / ".env"
+else:
+    env_path = BASE_DIR / ".env"
+
+if env_path.exists():
+    load_dotenv(dotenv_path=env_path)
 
 
 class Config:
@@ -11,13 +23,13 @@ class Config:
     PROJECT_VERSION: str = "1.0.0"
 
     # Database
-    POSTGRES_USER: str = os.getenv("DB_USER")
-    POSTGRES_PASSWORD: str = os.getenv("DB_PASSWORD")
-    POSTGRES_SERVER: str = os.getenv("DB_SERVER", "localhost")
-    POSTGRES_PORT: str = os.getenv("DB_PORT", "5432")
-    POSTGRES_DB: str = os.getenv("DB_NAME", "tdd")
+    POSTGRES_USER: str = os.getenv("DB_USER") or os.getenv("POSTGRES_USER") or "postgres"
+    POSTGRES_PASSWORD: str = os.getenv("DB_PASSWORD") or os.getenv("POSTGRES_PASSWORD") or ""
+    POSTGRES_SERVER: str = os.getenv("DB_SERVER") or os.getenv("POSTGRES_SERVER") or "localhost"
+    POSTGRES_PORT: str = os.getenv("DB_PORT") or os.getenv("POSTGRES_PORT") or "5432"
+    POSTGRES_DB: str = os.getenv("DB_NAME") or os.getenv("POSTGRES_DB") or "tdd"
 
-    DATABASE_URL: str = (
+    DATABASE_URL: str = os.getenv("DATABASE_URL") or (
         f"postgresql://{POSTGRES_USER}:{POSTGRES_PASSWORD}"
         f"@{POSTGRES_SERVER}:{POSTGRES_PORT}/{POSTGRES_DB}"
     )

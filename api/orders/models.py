@@ -37,3 +37,16 @@ class TBL_ORDER_ITEM(Base):
 
     order = relationship("TBL_ORDER", back_populates="order_items")
     book  = relationship("TBL_BOOK")
+
+
+class TBL_ORDER_ITEM_BATCH_ALLOCATION(Base):
+    __tablename__ = "tbl_order_item_batch_allocation"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    order_item_id = Column(UUID(as_uuid=True), ForeignKey("tbl_order_item.id", ondelete="CASCADE"), nullable=False)
+    stock_batch_id = Column(UUID(as_uuid=True), ForeignKey("tbl_stock_batch.id", ondelete="RESTRICT"), nullable=False)
+    quantity_allocated = Column(Integer, nullable=False)
+    unit_cost_price = Column(Numeric(10, 2), nullable=False)
+    
+    order_item = relationship("TBL_ORDER_ITEM")
+    stock_batch = relationship("TBL_STOCK_BATCH")

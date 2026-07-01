@@ -97,6 +97,42 @@ def get_client_ip(request: Request):
     if forwarded_for:
         return forwarded_for.split(",")[0].strip()
 
+from fastapi import APIRouter, Depends, Query, Request
+from fastapi import status
+from sqlalchemy.orm import Session
+from sqlalchemy import or_
+from typing import List
+from datetime import datetime, timezone, timedelta
+import uuid
+import secrets
+import string
+
+from main import app
+from core.db import get_db
+from api.auth_user.security import hash_password, verify_password, create_access_token
+
+from core.logger import write_log, LogAction, LogModule
+from api.auth_user import schemas
+from api.auth_user.models import (
+    TBL_AUTH_USER,
+    TBL_AUTH_ROLE,
+    TBL_AUTH_USER_ROLE,
+    TBL_AUTH_SESSION,
+    TBL_AUTH_LOGIN_LOG,
+)
+
+
+
+def get_client_ip(request: Request):
+    if not request:
+        return None
+
+    # standard forward
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+
+    # direct client
     if request.client:
         return request.client.host
 
@@ -118,8 +154,35 @@ def write_login_log(
         user_agent     = request.headers.get("user-agent"),
         failure_reason = failure_reason,
     )
-
     db.add(log)
+
+    # Write to System Log
+    if login_status == "SUCCESS":
+        write_log(
+            db          = db,
+            action      = LogAction.USER_LOGIN_SUCCESS,
+            module      = LogModule.AUTH,
+            description = f"User logged in: {email}",
+            user_id     = user_id,
+            user_email  = email,
+            entity_type = "user",
+            entity_id   = str(user_id) if user_id else None,
+            request     = request,
+            commit      = False,
+        )
+    else:
+        write_log(
+            db          = db,
+            action      = LogAction.USER_LOGIN_FAILED,
+            module      = LogModule.AUTH,
+            level       = "WARNING",
+            status      = "FAILED",
+            description = f"Login failed for: {email} — reason: {failure_reason}",
+            user_email  = email,
+            new_value   = {"reason": failure_reason},
+            request     = request,
+            commit      = False,
+        )
 
 def serialize_user(user: TBL_AUTH_USER):
     return {
@@ -139,6 +202,7 @@ def serialize_user(user: TBL_AUTH_USER):
 
 @app.post("/api/v1/auth/register", tags=["Auth"])
 def register_user(
+    request: Request,
     payload: schemas.RegisterRequest,
     db     : Session = Depends(get_db),
 ):
@@ -192,6 +256,21 @@ def register_user(
     db.add(user_role)
     db.commit()
     db.refresh(new_user)
+
+    write_log(
+        db          = db,
+        action      = LogAction.USER_REGISTERED,
+        module      = LogModule.AUTH,
+        description = f"New user registered: {payload.email}",
+        user_id     = new_user.id,
+        user_email  = new_user.email,
+        user_role   = "USER",
+        entity_type = "user",
+        entity_id   = str(new_user.id),
+        new_value   = {"email": new_user.email, "full_name": new_user.full_name},
+        request     = request,
+        commit      = True,
+    )
 
     user_data = serialize_user(new_user)
 
@@ -924,6 +1003,7 @@ def verify_otp(
 # ================= reset password api ===========================
 @app.post("/api/v1/auth/reset-password", tags=["Auth"])
 def reset_password(
+    request: Request,
     payload: schemas.ResetPasswordRequest,
     db     : Session = Depends(get_db),
 ):
@@ -984,6 +1064,19 @@ def reset_password(
 
     db.commit()
     notify_password_reset(db=db, user_id=user.id)
+
+    write_log(
+        db          = db,
+        action      = LogAction.PASSWORD_RESET_SUCCESS,
+        module      = LogModule.AUTH,
+        description = f"Password reset successful for: {user.email}",
+        user_id     = user.id,
+        user_email  = user.email,
+        entity_type = "user",
+        entity_id   = str(user.id),
+        request     = request,
+        commit      = True,
+    )
 
     return {"message": "Password reset successful"}
 

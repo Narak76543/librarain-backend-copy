@@ -35,6 +35,11 @@ from api.books import models as books_models  # noqa
 from api.cart import models as cart_models  # noqa
 from api.orders import models as orders_models  # noqa
 from api.wishlist import models as wishlist_models  # noqa
+from api.suppliers import models as suppliers_models  # noqa
+from api.purchase_orders import models as po_models  # noqa
+from api.inventory import models as inventory_models  # noqa
+from api.invoices import models as invoices_models  # noqa
+from api.system_log import models as system_log_models  # noqa
 config = context.config
 
 # Use database URL from your config.py/.env

@@ -15,6 +15,7 @@ class BookResponse(BaseModel):
     cost_price:     Decimal
     cover_url:      Optional[str]     = None
     stock:          int
+    min_profit_margin: Decimal = Decimal("20.00")
     isbn:           Optional[str]     = None
     language:       Optional[str]     = None
     pages:          Optional[int]     = None
@@ -35,9 +36,10 @@ class BookCreate(BaseModel):
     title:          str            = Field(min_length=1, max_length=255)
     author:         str            = Field(min_length=1, max_length=150)
     description:    Optional[str]  = None
-    price:          Decimal        = Field(gt=0)
+    price:          Decimal        = Field(ge=0)
     cost_price:     Decimal        = Field(ge=0, default=0.00)
     stock:          int            = Field(ge=0, default=0)
+    min_profit_margin: Decimal     = Field(ge=0, default=20.00)
     isbn:           Optional[str]  = None
     language:       Optional[str]  = "English"
     pages:          Optional[int]  = None
@@ -45,6 +47,7 @@ class BookCreate(BaseModel):
     published_date: Optional[date] = None
     category_id:    Optional[UUID] = None
     featured:       bool           = False
+    is_active:      bool           = True
 
 
 class BookUpdate(BaseModel):
@@ -54,6 +57,7 @@ class BookUpdate(BaseModel):
     price:          Optional[Decimal] = None
     cost_price:     Optional[Decimal] = None
     stock:          Optional[int]     = None
+    min_profit_margin: Optional[Decimal] = None
     isbn:           Optional[str]     = None
     language:       Optional[str]     = None
     pages:          Optional[int]     = None

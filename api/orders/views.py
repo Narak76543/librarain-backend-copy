@@ -20,12 +20,13 @@ from api.auth_user.views import response
 from api.auth_user.models import TBL_AUTH_USER
 from api.auth_user.security import get_current_user, require_admin
 from api.cart.models import TBL_CART_ITEM
-from api.orders.models import TBL_ORDER, TBL_ORDER_ITEM
+from api.orders.models import TBL_ORDER, TBL_ORDER_ITEM, TBL_ORDER_ITEM_BATCH_ALLOCATION
+from api.inventory.models import TBL_INVENTORY_TRANSACTION, TBL_STOCK_BATCH
 from fastapi import HTTPException, Path, Body
 from sqlalchemy import func
 from api.books.models import TBL_BOOK, TBL_STOCK_IN
-from api.orders.models import TBL_ORDER
-from api.auth_user.models import TBL_AUTH_USER
+from api.user_profile.models import TBL_USER_PROFILE
+from core.logger import write_log, LogAction, LogModule
 from api.telegram_bots.bot_polling import send_telegram_message_sync
 from core.fcm import notify_order_placed, notify_order_status
 
@@ -95,11 +96,58 @@ def place_order(
             message     = "Cart is empty",
         )
 
-    # Calculate total
-    total = sum(
-        Decimal(str(item.book.price)) * item.quantity
-        for item in cart_items
-    )
+    # Calculate total dynamically using strict FIFO batches
+    total = Decimal('0.00')
+    split_items = []
+
+    for cart_item in cart_items:
+        qty_to_allocate = cart_item.quantity
+        book = cart_item.book
+        
+        # Fetch active batches for this book
+        batches = db.query(TBL_STOCK_BATCH).filter(
+            TBL_STOCK_BATCH.book_id == book.id,
+            TBL_STOCK_BATCH.remaining_quantity > 0,
+            TBL_STOCK_BATCH.status == "active"
+        ).order_by(TBL_STOCK_BATCH.received_at.asc()).all()
+        
+        if not batches:
+            split_items.append({
+                "book_id": book.id,
+                "quantity": qty_to_allocate,
+                "price": Decimal(str(book.price)),
+                "cost": Decimal(str(book.cost_price))
+            })
+            total += Decimal(str(book.price)) * qty_to_allocate
+            continue
+            
+        for batch in batches:
+            if qty_to_allocate <= 0:
+                break
+                
+            take_qty = min(batch.remaining_quantity, qty_to_allocate)
+            
+            margin_multiplier = Decimal('1.0') + (Decimal(str(book.min_profit_margin or 0)) / Decimal('100.0'))
+            batch_sale_price = Decimal(str(batch.unit_cost_price)) * margin_multiplier
+            
+            split_items.append({
+                "book_id": book.id,
+                "quantity": take_qty,
+                "price": batch_sale_price,
+                "cost": Decimal(str(batch.unit_cost_price))
+            })
+            
+            total += batch_sale_price * take_qty
+            qty_to_allocate -= take_qty
+            
+        if qty_to_allocate > 0:
+            split_items.append({
+                "book_id": book.id,
+                "quantity": qty_to_allocate,
+                "price": Decimal(str(book.price)),
+                "cost": Decimal(str(book.cost_price))
+            })
+            total += Decimal(str(book.price)) * qty_to_allocate
 
     # Create order
     order = TBL_ORDER(
@@ -114,14 +162,14 @@ def place_order(
     db.add(order)
     db.flush()
 
-    # Create order items — lock price_at_purchase
-    for cart_item in cart_items:
+    # Create order items — lock price_at_purchase based on split batches
+    for split_item in split_items:
         order_item = TBL_ORDER_ITEM(
             order_id               = order.id,
-            book_id                = cart_item.book_id,
-            quantity               = cart_item.quantity,
-            price_at_purchase      = Decimal(str(cart_item.book.price)),
-            cost_price_at_purchase = Decimal(str(cart_item.book.cost_price)) if cart_item.book else Decimal('0.00'),
+            book_id                = split_item["book_id"],
+            quantity               = split_item["quantity"],
+            price_at_purchase      = split_item["price"],
+            cost_price_at_purchase = split_item["cost"],
         )
         db.add(order_item)
 
@@ -139,6 +187,23 @@ def place_order(
     order_id = str(order.id),
     total    = str(order.total),
 )
+
+    write_log(
+        db          = db,
+        action      = LogAction.ORDER_PLACED,
+        module      = LogModule.ORDER,
+        description = f"Order placed by {current_user.email} — total: ${order.total}",
+        user_id     = current_user.id,
+        user_email  = current_user.email,
+        entity_type = "order",
+        entity_id   = str(order.id),
+        new_value   = {
+            "order_id":    str(order.id),
+            "total":       str(order.total),
+            "items_count": len(order.order_items),
+        },
+        commit      = True,
+    )
 
     # Trigger Telegram Alert for new order
     if current_user.telegram_chat_id:
@@ -325,11 +390,69 @@ def update_order_status (
             detail      = f"order with id '{order_id}' not found "
         )
         
-    # Stock Adjustment on "Completed"
-    if payload.status.lower() == "completed" and order.status.lower() != "completed":
+    # Stock Adjustment on "delivered" or "completed"
+    if payload.status.lower() in ("delivered", "completed") and order.status.lower() not in ("delivered", "completed"):
         for oi in order.order_items:
             if oi.book:
+                qty_to_fulfill = oi.quantity
+                total_cost_for_item = Decimal("0.00")
+                
+                # Fetch active batches (FIFO)
+                batches = db.query(TBL_STOCK_BATCH).filter(
+                    TBL_STOCK_BATCH.book_id == oi.book.id,
+                    TBL_STOCK_BATCH.remaining_quantity > 0
+                ).order_by(TBL_STOCK_BATCH.received_at.asc()).all()
+                
+                for batch in batches:
+                    if qty_to_fulfill <= 0:
+                        break
+                        
+                    take_qty = min(batch.remaining_quantity, qty_to_fulfill)
+                    batch.remaining_quantity -= take_qty
+                    qty_to_fulfill -= take_qty
+                    
+                    if batch.remaining_quantity == 0:
+                        batch.status = "depleted"
+                        # Strict FIFO Pricing: Update retail price to the NEXT active batch
+                        next_batch = db.query(TBL_STOCK_BATCH).filter(
+                            TBL_STOCK_BATCH.book_id == oi.book.id,
+                            TBL_STOCK_BATCH.id != batch.id,
+                            TBL_STOCK_BATCH.remaining_quantity > 0,
+                            TBL_STOCK_BATCH.status == "active"
+                        ).order_by(TBL_STOCK_BATCH.received_at.asc()).first()
+                        
+                        if next_batch:
+                            margin_multiplier = 1.0 + (float(oi.book.min_profit_margin) / 100.0)
+                            new_price = float(next_batch.unit_cost_price) * margin_multiplier
+                            oi.book.price = new_price
+                        
+                    # Calculate cost for this portion
+                    batch_cost = Decimal(str(take_qty)) * Decimal(str(batch.unit_cost_price))
+                    total_cost_for_item += batch_cost
+                    
+                    # Create allocation record
+                    allocation = TBL_ORDER_ITEM_BATCH_ALLOCATION(
+                        order_item_id=oi.id,
+                        stock_batch_id=batch.id,
+                        quantity_allocated=take_qty,
+                        unit_cost_price=batch.unit_cost_price
+                    )
+                    db.add(allocation)
+                
+                # Update blended cost_price
+                if oi.quantity > 0:
+                    oi.cost_price_at_purchase = total_cost_for_item / Decimal(str(oi.quantity))
+
+                # Update global stock
                 oi.book.stock = max(0, oi.book.stock - oi.quantity)
+                transaction = TBL_INVENTORY_TRANSACTION(
+                    book_id=oi.book.id,
+                    transaction_type="sale",
+                    quantity=-oi.quantity,
+                    current_stock=oi.book.stock,
+                    reference_id=str(order.id)
+                )
+                db.add(transaction)
 
     old_status = order.status
     order.status = payload.status.lower()
@@ -338,12 +461,34 @@ def update_order_status (
         db.commit()
         db.refresh(order)
 
+        if order.status in ("delivered", "completed"):
+            from api.invoices.services import create_invoice_for_order
+            try:
+                create_invoice_for_order(db, order)
+            except Exception as inv_err:
+                logger.error(f"Failed to auto-generate invoice for order {order.id}: {inv_err}")
+
         if old_status != payload.status:
             notify_order_status(
                 db         = db,
                 user_id    = order.user_id,
                 order_id   = str(order.id),
                 new_status = payload.status,
+            )
+
+            write_log(
+                db          = db,
+                action      = LogAction.ORDER_STATUS_CHANGED,
+                module      = LogModule.ORDER,
+                description = f"Order #{str(order.id)[:8].upper()} status changed: {old_status} -> {payload.status}",
+                user_id     = current_user.id,
+                user_email  = current_user.email,
+                user_role   = "ADMIN",
+                entity_type = "order",
+                entity_id   = str(order.id),
+                old_value   = {"status": old_status},
+                new_value   = {"status": payload.status},
+                commit      = True,
             )
 
     except Exception as e :
@@ -484,7 +629,7 @@ def get_dashboard_stats(
         func.lower(TBL_ORDER.status) == "completed"
     ).scalar() or 0
     
-    inventory_value = db.query(func.sum(TBL_BOOK.stock * TBL_BOOK.cost_price)).filter(TBL_BOOK.is_active.is_(True)).scalar() or 0
+    inventory_value = db.query(func.sum(TBL_STOCK_BATCH.remaining_quantity * TBL_STOCK_BATCH.unit_cost_price)).filter(TBL_STOCK_BATCH.remaining_quantity > 0).scalar() or 0
     
     kpis = {
         "revenue_today"   : float(revenue_today),

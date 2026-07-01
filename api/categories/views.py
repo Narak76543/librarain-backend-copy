@@ -12,6 +12,8 @@ from api.auth_user.security import get_current_user, require_admin
 from api.categories.models import TBL_CATEGORY
 from api.categories import schemas
 
+from core.logger import write_log, LogAction, LogModule
+
 logger = logging.getLogger(__name__)
 
 
@@ -95,6 +97,20 @@ def create_category(
     db.commit()
     db.refresh(category)
 
+    write_log(
+        db          = db,
+        action      = LogAction.CATEGORY_CREATED,
+        module      = LogModule.CATEGORY,
+        description = f"Category created: {category.name}",
+        user_id     = current_user.id,
+        user_email  = current_user.email,
+        user_role   = "ADMIN",
+        entity_type = "category",
+        entity_id   = str(category.id),
+        new_value   = {"name": category.name, "slug": category.slug},
+        commit      = True,
+    )
+
     return response(
         ok          = True,
         status_code = status.HTTP_201_CREATED,
@@ -143,10 +159,29 @@ def update_category(
             )
 
     update_data = payload.model_dump(exclude_unset=True)
+    old_values = {}
     for field, value in update_data.items():
+        old_values[field] = str(getattr(category, field))
         setattr(category, field, value)
 
     db.commit()
+    db.refresh(category)
+
+    if update_data:
+        write_log(
+            db          = db,
+            action      = LogAction.CATEGORY_UPDATED,
+            module      = LogModule.CATEGORY,
+            description = f"Category updated: {category.name}",
+            user_id     = current_user.id,
+            user_email  = current_user.email,
+            user_role   = "ADMIN",
+            entity_type = "category",
+            entity_id   = str(category.id),
+            old_value   = old_values,
+            new_value   = {k: str(v) for k, v in update_data.items()},
+            commit      = True,
+        )
     db.refresh(category)
 
     return response(
@@ -181,6 +216,21 @@ def delete_category(
 
     category.is_active = False
     db.commit()
+
+    write_log(
+        db          = db,
+        action      = LogAction.CATEGORY_DELETED,
+        module      = LogModule.CATEGORY,
+        description = f"Category deleted (soft): {category.name}",
+        user_id     = current_user.id,
+        user_email  = current_user.email,
+        user_role   = "ADMIN",
+        entity_type = "category",
+        entity_id   = str(category.id),
+        old_value   = {"is_active": True},
+        new_value   = {"is_active": False},
+        commit      = True,
+    )
 
     return response(
         ok          = True,

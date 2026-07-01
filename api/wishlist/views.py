@@ -11,6 +11,9 @@ from api.auth_user.security import get_current_user
 from api.wishlist.models import TBL_WISHLIST
 from api.wishlist import schemas
 from api.books.models import TBL_BOOK
+from core.logger import write_log, LogAction, LogModule
+
+from fastapi import Request
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +59,7 @@ def get_wishlist(
 # ================= POST /wishlist ===========================
 @app.post("/api/v1/wishlist", tags=["Wishlist"])
 def add_to_wishlist(
+    request     : Request,
     payload     : schemas.WishlistAddRequest,
     current_user: TBL_AUTH_USER = Depends(get_current_user),
     db          : Session       = Depends(get_db),
@@ -102,6 +106,21 @@ def add_to_wishlist(
     db.commit()
     db.refresh(item)
 
+    write_log(
+        db          = db,
+        action      = LogAction.WISHLIST_ADDED,
+        module      = LogModule.WISHLIST,
+        description = f"Added '{book.title}' to wishlist",
+        user_id     = current_user.id,
+        user_email  = current_user.email,
+        user_role   = "USER",
+        entity_type = "wishlist_item",
+        entity_id   = str(book.id),
+        new_value   = {"book_id": str(book.id)},
+        request     = request,
+        commit      = True,
+    )
+
     return response(
         ok          = True,
         status_code = status.HTTP_201_CREATED,
@@ -113,6 +132,7 @@ def add_to_wishlist(
 # ================= DELETE /wishlist/{book_id} ===============
 @app.delete("/api/v1/wishlist/{book_id}", tags=["Wishlist"])
 def remove_from_wishlist(
+    request     : Request,
     book_id     : str,
     current_user: TBL_AUTH_USER = Depends(get_current_user),
     db          : Session       = Depends(get_db),
@@ -135,6 +155,20 @@ def remove_from_wishlist(
 
     db.delete(item)
     db.commit()
+
+    write_log(
+        db          = db,
+        action      = LogAction.WISHLIST_REMOVED,
+        module      = LogModule.WISHLIST,
+        description = f"Removed book from wishlist",
+        user_id     = current_user.id,
+        user_email  = current_user.email,
+        user_role   = "USER",
+        entity_type = "wishlist_item",
+        entity_id   = str(book_id),
+        request     = request,
+        commit      = True,
+    )
 
     return response(
         ok          = True,
@@ -174,6 +208,7 @@ def check_wishlist(
 # Convenience endpoint — adds if not exists, removes if exists
 @app.post("/api/v1/wishlist/toggle", tags=["Wishlist"])
 def toggle_wishlist(
+    request     : Request,
     payload     : schemas.WishlistAddRequest,
     current_user: TBL_AUTH_USER = Depends(get_current_user),
     db          : Session       = Depends(get_db),
@@ -190,6 +225,19 @@ def toggle_wishlist(
     if existing:
         db.delete(existing)
         db.commit()
+        write_log(
+            db          = db,
+            action      = LogAction.WISHLIST_REMOVED,
+            module      = LogModule.WISHLIST,
+            description = f"Removed book from wishlist",
+            user_id     = current_user.id,
+            user_email  = current_user.email,
+            user_role   = "USER",
+            entity_type = "wishlist_item",
+            entity_id   = str(payload.book_id),
+            request     = request,
+            commit      = True,
+        )
         return response(
             ok          = True,
             status_code = status.HTTP_200_OK,
@@ -214,6 +262,21 @@ def toggle_wishlist(
     db.add(item)
     db.commit()
     db.refresh(item)
+
+    write_log(
+        db          = db,
+        action      = LogAction.WISHLIST_ADDED,
+        module      = LogModule.WISHLIST,
+        description = f"Added '{book.title}' to wishlist",
+        user_id     = current_user.id,
+        user_email  = current_user.email,
+        user_role   = "USER",
+        entity_type = "wishlist_item",
+        entity_id   = str(book.id),
+        new_value   = {"book_id": str(book.id)},
+        request     = request,
+        commit      = True,
+    )
 
     return response(
         ok          = True,

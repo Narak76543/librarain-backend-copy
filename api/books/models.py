@@ -21,6 +21,8 @@ class TBL_BOOK(Base):
     cost_price     = Column(Numeric(10, 2), nullable=False, default=0)
     cover_url      = Column(Text,           nullable=True)
     stock          = Column(Integer,        nullable=False, default=0)
+    min_stock_level = Column(Integer,       nullable=False, default=5)
+    min_profit_margin = Column(Numeric(5, 2), nullable=False, default=20.00)
     isbn           = Column(String(20),     nullable=True,  unique=True)
     language       = Column(String(50),     nullable=True,  default="English")
     pages          = Column(Integer,        nullable=True)

@@ -20,6 +20,8 @@ from fastapi.responses import StreamingResponse
 import csv
 import io
 
+from core.logger import write_log, LogAction, LogModule
+
 logger = logging.getLogger(__name__)
 
 
@@ -51,15 +53,20 @@ def get_books(
     min_price: float | None = Query(None),
     max_price: float | None = Query(None),
     featured : bool | None  = Query(None),
+    status_filter   : str | None   = Query(None, alias="status"), # 'active', 'draft', 'all'
     sort     : str | None   = Query(None),
-    limit    : int          = Query(10, ge=1, le=100),
+    limit    : int          = Query(10, ge=1, le=500),
     offset   : int          = Query(0,  ge=0),
     db       : Session      = Depends(get_db),
 ):
-    query = (
-        db.query(TBL_BOOK)
-        .filter(TBL_BOOK.is_active.is_(True))
-    )
+    query = db.query(TBL_BOOK)
+    
+    if status_filter == 'draft':
+        query = query.filter(TBL_BOOK.is_active.is_(False))
+    elif status_filter == 'all':
+        pass
+    else:
+        query = query.filter(TBL_BOOK.is_active.is_(True))
 
     if search:
         search_terms = search.split()
@@ -185,6 +192,20 @@ def create_book(
         )
         db.add(history)
         db.commit()
+
+    write_log(
+        db          = db,
+        action      = LogAction.BOOK_CREATED,
+        module      = LogModule.BOOK,
+        description = f"Book created: '{book.title}' by {book.author}",
+        user_id     = current_user.id,
+        user_email  = current_user.email,
+        user_role   = "ADMIN",
+        entity_type = "book",
+        entity_id   = str(book.id),
+        new_value   = {"title": book.title, "price": str(book.price), "stock": book.stock},
+        commit      = True,
+    )
 
     return response(
         ok          = True,
@@ -340,11 +361,52 @@ def update_book(
         )
 
     update_data = payload.model_dump(exclude_unset=True)
+    old_values = {}
+    
+    # Strict FIFO pricing: if min_profit_margin changes, recalculate book price based on oldest active batch
+    margin_changed = False
+    new_margin = None
+    if "min_profit_margin" in update_data:
+        old_margin = getattr(book, "min_profit_margin")
+        new_margin = update_data["min_profit_margin"]
+        if old_margin != new_margin:
+            margin_changed = True
+            
     for field, value in update_data.items():
+        old_values[field] = str(getattr(book, field))
         setattr(book, field, value)
+
+    if margin_changed:
+        from api.inventory.models import TBL_STOCK_BATCH
+        oldest_batch = db.query(TBL_STOCK_BATCH).filter(
+            TBL_STOCK_BATCH.book_id == book.id,
+            TBL_STOCK_BATCH.remaining_quantity > 0,
+            TBL_STOCK_BATCH.status == "active"
+        ).order_by(TBL_STOCK_BATCH.received_at.asc()).first()
+        
+        if oldest_batch:
+            margin_multiplier = 1.0 + (float(new_margin) / 100.0)
+            book.price = float(oldest_batch.unit_cost_price) * margin_multiplier
+            update_data["price"] = book.price # To log it
 
     db.commit()
     db.refresh(book)
+
+    if update_data:
+        write_log(
+            db          = db,
+            action      = LogAction.BOOK_UPDATED,
+            module      = LogModule.BOOK,
+            description = f"Book updated: '{book.title}'",
+            user_id     = current_user.id,
+            user_email  = current_user.email,
+            user_role   = "ADMIN",
+            entity_type = "book",
+            entity_id   = str(book.id),
+            old_value   = old_values,
+            new_value   = {k: str(v) for k, v in update_data.items()},
+            commit      = True,
+        )
 
     return response(
         ok          = True,

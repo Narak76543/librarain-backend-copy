@@ -1,5 +1,5 @@
 # ================= user profile api ===========================
-from fastapi import Depends, File, UploadFile
+from fastapi import Depends, File, UploadFile, Request
 from fastapi.encoders import jsonable_encoder
 from starlette import status
 from api.auth_user.models import TBL_AUTH_USER
@@ -12,6 +12,8 @@ from sqlalchemy.orm import Session
 from config import configs
 from .schemas import *
 import logging
+from core.logger import write_log, LogAction, LogModule
+
 logger = logging.getLogger(__name__)
 
 from api.auth_user import schemas as auth_schemas
@@ -53,6 +55,7 @@ def get_my_profile(
 
 @app.put("/api/v1/users/me", tags=["User Profile"])
 def update_my_profile(
+    request     : Request,
     payload     : profile_schemas.UserProfileUpdate,
     current_user: TBL_AUTH_USER = Depends(get_current_user),
     db          : Session       = Depends(get_db),
@@ -68,11 +71,30 @@ def update_my_profile(
         db.add(profile)
 
     update_data = payload.model_dump(exclude_unset=True)
+    old_values = {}
     for field, value in update_data.items():
+        old_values[field] = str(getattr(profile, field))
         setattr(profile, field, value)
 
     db.commit()
     db.refresh(profile)
+
+    if update_data:
+        write_log(
+            db          = db,
+            action      = LogAction.PROFILE_UPDATED,
+            module      = LogModule.PROFILE,
+            description = f"User profile updated",
+            user_id     = current_user.id,
+            user_email  = current_user.email,
+            user_role   = "USER",
+            entity_type = "user_profile",
+            entity_id   = str(current_user.id),
+            old_value   = old_values,
+            new_value   = {k: str(v) for k, v in update_data.items()},
+            request     = request,
+            commit      = True,
+        )
 
     profile_data = jsonable_encoder(
         profile_schemas.UserProfileResponse.model_validate(profile)
@@ -89,6 +111,7 @@ def update_my_profile(
 
 @app.post("/api/v1/users/me/avatar", tags=["User Profile"])
 async def upload_avatar(
+    request     : Request,
     file        : UploadFile    = File(...),
     current_user: TBL_AUTH_USER = Depends(get_current_user),
     db          : Session       = Depends(get_db),
@@ -156,6 +179,21 @@ async def upload_avatar(
     profile.avatar_url = avatar_url
     db.commit()
     db.refresh(profile)
+
+    write_log(
+        db          = db,
+        action      = LogAction.AVATAR_UPLOADED,
+        module      = LogModule.PROFILE,
+        description = f"User avatar updated",
+        user_id     = current_user.id,
+        user_email  = current_user.email,
+        user_role   = "USER",
+        entity_type = "user_profile",
+        entity_id   = str(current_user.id),
+        new_value   = {"avatar_url": avatar_url},
+        request     = request,
+        commit      = True,
+    )
 
     profile_data = jsonable_encoder(
         profile_schemas.UserProfileResponse.model_validate(profile)
