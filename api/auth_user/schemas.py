@@ -112,3 +112,29 @@ class GoogleLoginRequest(BaseModel):
     id_token   : str
     device_id  : Optional[str] = None
     device_name: Optional[str] = None
+
+# New : Two-Step registration + Telegram OTP Schemas
+
+class RequestRegistrationEmail(BaseModel) :
+    email : EmailStr
+
+class RequestPhoneOtp(BaseModel):
+    phone : str = Field(..., min_length=8 , max_length=20)
+
+class VerifyPhoneOtp(BaseModel):
+    phone    : str = Field(..., min_length=8 ,max_digits=20 )
+    otp_code : str = Field(..., min_length=6 , max_length=6)
+
+class ResgisterRequest(BaseModel):
+    full_name             : str = Field(..., max_length=150)
+    email                 : EmailStr
+    phone                 : Optional[str] = Field(default=None, max_length=30)
+    password              : str = Field(..., min_length=6)
+    registration_reference: str
+    phone_reference       : Optional[str] = None
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: str) -> str:
+        return validate_bcrypt_password_length(value)
+

@@ -5,15 +5,8 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent
 ENVIRONMENT = os.getenv("APP_ENV", "development").strip().lower()
 
-if ENVIRONMENT in {"development", "dev", "local"}:
-    env_path = BASE_DIR / ".env.dev"
-    if not env_path.exists():
-        env_path = BASE_DIR / ".env"
-elif ENVIRONMENT in {"production", "prod", "live"}:
-    env_path = BASE_DIR / ".env"
-else:
-    env_path = BASE_DIR / ".env"
-
+# Use a single environment file for local config. Ignore .env.dev overrides.
+env_path = BASE_DIR / ".env"
 if env_path.exists():
     load_dotenv(dotenv_path=env_path)
 

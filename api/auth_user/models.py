@@ -10,6 +10,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Integer, 
     text,
+    Index
 )
 from sqlalchemy.dialects.postgresql import UUID, INET
 from sqlalchemy.orm import relationship
@@ -198,4 +199,62 @@ class TBL_TELEGRAM_LOGIN_TOKEN(Base):
 
     user = relationship(
         "TBL_AUTH_USER",
+    )
+
+# registration security  [ email verification, phone OTP , and rate Limite]
+
+class TBL_EMAIL_VERIFICATION_TOKEN(Base):
+
+    __tablename__ = "tbl_email_verification_token"
+
+    id            = Column(UUID(as_uuid=True) , primary_key=True , default=uuid.uuid4)
+    email         = Column(String(150) , nullable=False , index= True)
+    token_hash    = Column(String(64) , nullable=False , unique= True , index= True)
+    purpose       = Column(String(30) , nullable=False ,server_default=text("REGISTER"))
+    ip_address    = Column(INET , nullable=True)
+    used          = Column(Boolean , nullable=False , server_default=text("false"))
+    used_at       = Column(DateTime(timezone=True) , nullable= True)
+    expire_date   = Column(DateTime(timezone=True) , nullable=False)
+    created_at    = Column(DateTime(timezone=True) , server_default=func.now() , nullable=False)
+
+    __table_args__ = (
+        Index("ix_email_verif_email_used_created", "email", "used", "created_at"),
+    )
+
+
+class TBL_PHONE_OTP(Base):
+    __tablename__ = "tbl_phone_otp"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    phone = Column(String(20), nullable=False, index=True)
+    code_hash = Column(String(128), nullable=False)
+    purpose = Column(String(30), nullable=False, server_default=text("REGISTER"))
+    ip_address = Column(INET, nullable=True)
+    used = Column(Boolean, nullable=False, server_default=text("false"))
+    used_at = Column(DateTime(timezone=True), nullable=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    attempts = Column(Integer, nullable=False, server_default=text("0"))
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_phone_otp_phone_used_created", "phone", "used", "created_at"),
+    )
+
+
+class TBL_REGISTRATION_RATE_LIMIT(Base) :
+
+    __tablename__ = "tbl_registration_rate_limit"
+
+    id             = Column(UUID(as_uuid=True) , primary_key=True , default=uuid.uuid4)
+    scope_type     = Column(String(20) , nullable=False)
+    scope_value    = Column(String(100) , nullable=False)
+    window_start   = Column(DateTime(timezone=True) , nullable= False)
+    hit_count      = Column(Integer , nullable= False , server_default=text("1"))
+    __table_args__ = (
+                UniqueConstraint(
+            "scope_type", "scope_value", "window_start",
+            name="uq_reg_rate_limit_scope_window",
+        ),
+        Index("ix_reg_rate_limit_scope", "scope_type", "scope_value"),
+
     )
