@@ -5,10 +5,10 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent
 ENVIRONMENT = os.getenv("APP_ENV", "development").strip().lower()
 
-# Use a single environment file for local config. Ignore .env.dev overrides.
+# Use one source of truth: the root .env file only.
 env_path = BASE_DIR / ".env"
 if env_path.exists():
-    load_dotenv(dotenv_path=env_path)
+    load_dotenv(dotenv_path=env_path, override=True)
 
 
 class Config:

@@ -104,16 +104,19 @@ def notify_order_status(db, user_id, order_id: str, new_status: str):
     if not token:
         return
     messages = {
-        "processing": ("========Order Processing =========== ",
+        "processing": ("Order Processing",
                        f"Order #{order_id[:8].upper()} is being processed!"),
-        "delivered" : ("======== Order Delivered! ===============",
-                       f"Order #{order_id[:8].upper()} delivered. Enjoy! "),
-        "cancelled" : ("======== Order Cancelled ====================",
+        "completed": ("Order Completed!",
+                       f"Order #{order_id[:8].upper()} is completed. Thank you!"),
+        "delivered" : ("Order Delivered!",
+                       f"Order #{order_id[:8].upper()} delivered. Enjoy!"),
+        "cancelled" : ("Order Cancelled",
                        f"Order #{order_id[:8].upper()} was cancelled."),
     }
-    if new_status not in messages:
+    status_key = new_status.lower().strip()
+    if status_key not in messages:
         return
-    title, body = messages[new_status]
+    title, body = messages[status_key]
     send_notification(
         fcm_token = token,
         title     = title,
@@ -132,7 +135,7 @@ def notify_password_reset(db, user_id):
         return
     send_notification(
         fcm_token = token,
-        title     = "======= Password Reset Successful ==========",
+        title     = "Password Reset Successful",
         body      = "Your password was changed. If this wasn't you contact support.",
         data      = {"type": "password_reset"},
     )

@@ -1,8 +1,43 @@
 import os
 import importlib
+from config import configs
 from core.db import Base, engine
 from sqlalchemy import inspect
 from sqlalchemy.exc import SQLAlchemyError
+
+
+def ensure_database_exists():
+    """
+    Connect to default 'postgres' database to ensure the target database exists.
+    Creates the database automatically if it does not exist.
+    """
+    try:
+        import psycopg2
+        from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+        from psycopg2 import sql
+
+        target_db = configs.POSTGRES_DB
+        conn = psycopg2.connect(
+            dbname="postgres",
+            user=configs.POSTGRES_USER,
+            password=configs.POSTGRES_PASSWORD,
+            host=configs.POSTGRES_SERVER,
+            port=configs.POSTGRES_PORT,
+        )
+        conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM pg_database WHERE datname = %s;", (target_db,))
+            exists = cur.fetchone()
+            if not exists:
+                print(f"Database '{target_db}' does not exist. Creating database...")
+                cur.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(target_db)))
+                print(f"Database '{target_db}' created successfully.")
+            else:
+                print(f"Database '{target_db}' exists.")
+        conn.close()
+    except Exception as e:
+        print(f"Note: Skipped auto-create database check: {e}")
+
 
 def import_models(base_path: str, sub_path: str = "api"):
     """
@@ -19,45 +54,51 @@ def import_models(base_path: str, sub_path: str = "api"):
                 except ImportError as e:
                     print(f"Error importing {module_name}: {e}")
 
+
 def create_tables():
     """
     Create all tables defined in the models.
     """
-    # Import all models
-    import_models(os.getcwd())  # Adjust the base path if running from another location
-    
-    # Verify the connection to the database
+    # 1. Ensure target database exists
+    ensure_database_exists()
+
+    # 2. Import all models
+    import_models(os.getcwd())
+
+    # 3. Verify connection to the database
     try:
         with engine.connect() as connection:
             print("Database connection successful.")
     except Exception as e:
         print(f"Error connecting to the database: {e}")
         return
-    
-    # Debugging: Print the tables before creating them
-    print(f"Base.metadata.tables before creation: {Base.metadata.tables}")
-    
-    # Check if tables are loaded
+
+    # Check if tables are loaded in metadata
     if not Base.metadata.tables:
         print("No tables found to create.")
-    else:
-        print(f"Tables to be created: {Base.metadata.tables.keys()}")
-    
-    # Check if tables exist in the public schema
-    inspector = inspect(engine)
-    tables_in_public = inspector.get_table_names(schema='public')
-    print(f"Tables in the public schema before creation: {tables_in_public}")
-    
+        return
+
+    print(f"Tables registered in models ({len(Base.metadata.tables)}): {list(Base.metadata.tables.keys())}")
+
+    # Inspect public schema before creation
+    inspector_before = inspect(engine)
+    tables_in_public_before = inspector_before.get_table_names(schema="public")
+    print(f"Tables in public schema before creation: {len(tables_in_public_before)}")
+
     try:
-        # Attempt to create all tables
+        # Create all tables
         Base.metadata.create_all(bind=engine)
         print("All tables have been created successfully.")
     except SQLAlchemyError as e:
         print(f"Error creating tables: {e}")
-    
-    # Verify tables after creation
-    tables_in_public_after = inspector.get_table_names(schema='public')
-    print(f"Tables in the public schema after creation: {tables_in_public_after}")
+        return
+
+    # Fresh inspector to verify tables after creation
+    inspector_after = inspect(engine)
+    tables_in_public_after = inspector_after.get_table_names(schema="public")
+    print(f"Tables in public schema after creation ({len(tables_in_public_after)}): {tables_in_public_after}")
+
 
 if __name__ == "__main__":
     create_tables()
+
